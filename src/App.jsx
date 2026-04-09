@@ -393,13 +393,10 @@ function SettingsModal({ settings, onSave, onClose, db, onImport, t }) {
             </div>
             <button onClick={()=>exportToExcel(db)} style={{ width:"100%", padding:"11px", borderRadius:8, border:"none", background:"linear-gradient(135deg,#1a6b3c,#22c55e)", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer", marginBottom:6 }}>📊 Export All to Excel (.csv)</button>
             <button onClick={()=>exportToExcel(db.filter(r => {
-              const addr = (r.address||'').toLowerCase();
               const src = (r.source||'').toLowerCase();
-              const notes = (r.notes||'').toLowerCase();
-              return addr.includes(', ca ') || addr.includes(', ca,') || addr.includes('california') || 
-                     src.includes('california') || src.includes(' ca ') || notes.includes('california') ||
-                     addr.match(/,\s*ca\s*\d{5}/) || addr.endsWith(', ca');
-            }))} style={{ width:"100%", padding:"11px", borderRadius:8, border:"none", background:"linear-gradient(135deg,#1e3a5f,#2563eb)", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer", marginBottom:14 }}>🌴 Export California Only (.csv)</button>
+              // Exclude original CA seed database entries
+              return !src.includes('ca database') && !src.includes('california database') && !src.includes('seed');
+            }))} style={{ width:"100%", padding:"11px", borderRadius:8, border:"none", background:"linear-gradient(135deg,#1e3a5f,#2563eb)", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer", marginBottom:14 }}>🆕 Export Newly Added Only (.csv)</button>
 
             <label style={{ fontSize:11, fontWeight:700, color:t.sub, textTransform:"uppercase", fontFamily:"'JetBrains Mono',monospace", display:"block", marginBottom:6 }}>Import (Paste CSV or JSON)</label>
             <textarea value={importText} onChange={e=>setImportText(e.target.value)} placeholder='Paste JSON array or CSV data here…' style={{ width:"100%", height:80, padding:10, borderRadius:8, border:`1px solid ${t.inputBorder}`, background:t.input, color:t.text, fontSize:11, fontFamily:"'JetBrains Mono',monospace", resize:"vertical", boxSizing:"border-box", marginBottom:6 }} />
