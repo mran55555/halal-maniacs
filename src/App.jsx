@@ -226,6 +226,48 @@ function exportToExcel(db) {
   URL.revokeObjectURL(url);
 }
 
+async function verifyWithGoogle(restaurant, cityName, stateName) {
+  try {
+    const resp = await fetch('/api/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: restaurant.name,
+        address: restaurant.address,
+        city: cityName,
+        state: stateName,
+      }),
+    });
+    if (!resp.ok) return restaurant;
+    const data = await resp.json();
+
+    if (!data.found) {
+      return { ...restaurant, _googleNote: 'Not found on Google Maps', _unverified: true };
+    }
+    if (data.permanentlyClosed) {
+      return { ...restaurant, _permanentlyClosed: true, notes: '🚫 Permanently closed (Google)' };
+    }
+
+    return {
+      ...restaurant,
+      phone: data.phone || restaurant.phone,
+      website: data.website || restaurant.website,
+      address: data.address || restaurant.address,
+      gmaps: data.gmaps || restaurant.gmaps,
+      _googleRating: data.rating ? `${data.rating}⭐ (${data.totalRatings})` : '',
+      _googleVerified: true,
+      _temporarilyClosed: data.temporarilyClosed,
+      notes: [
+        restaurant.notes,
+        data.temporarilyClosed ? '⚠️ Temporarily closed' : '',
+        data.rating ? `Google: ${data.rating}⭐ (${data.totalRatings} reviews)` : '',
+      ].filter(Boolean).join(' | '),
+    };
+  } catch(e) {
+    return restaurant;
+  }
+}
+
 async function copyToClipboard(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch(e) { return false; }
 }
