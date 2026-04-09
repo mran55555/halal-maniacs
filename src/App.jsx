@@ -1962,6 +1962,25 @@ No markdown, no backticks, ONLY the JSON array.` }],
                           <button onClick={()=>setCrawlSelectedCities(new Set())} style={{ padding:"4px 10px", border:`1px solid ${t.inputBorder}`, borderRadius:6, background:t.input, color:"#dc2626", fontSize:10, fontWeight:700, cursor:"pointer" }}>Deselect All</button>
                         </div>
                       </div>
+                      {/* Start from city dropdown */}
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+                        <span style={{ fontSize:10, fontWeight:700, color:t.sub, fontFamily:"'JetBrains Mono',monospace", whiteSpace:"nowrap" }}>Start from:</span>
+                        <select
+                          onChange={e => {
+                            const idx = parseInt(e.target.value);
+                            if (!isNaN(idx)) {
+                              setCrawlSelectedCities(new Set(crawlCities.slice(idx)));
+                            }
+                          }}
+                          defaultValue=""
+                          style={{ flex:1, padding:"5px 8px", borderRadius:6, border:`1px solid ${t.inputBorder}`, background:t.input, color:t.text, fontSize:11, fontFamily:"inherit", cursor:"pointer" }}
+                        >
+                          <option value="">— pick a city —</option>
+                          {crawlCities.map((c, i) => (
+                            <option key={i} value={i}>{c} ({crawlCities.length - i} cities)</option>
+                          ))}
+                        </select>
+                      </div>
                       <div style={{ maxHeight:200, overflowY:"auto", fontSize:11, color:t.muted, lineHeight:1.8 }}>
                         {crawlCities.map((c, i) => {
                           const sel = crawlSelectedCities.has(c);
