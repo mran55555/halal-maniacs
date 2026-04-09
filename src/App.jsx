@@ -371,12 +371,12 @@ function VerifyModal({ restaurant, onSave, onClose, t }) {
     const start = Date.now();
     timerRef.current = setInterval(() => setCallTime(Math.floor((Date.now() - start) / 1000)), 1000);
 
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 500));
     setCallStatus("Ringing...");
-    await new Promise(r => setTimeout(r, 2500));
+    await new Promise(r => setTimeout(r, 500));
     setCallStatus("Connected");
     setTranscript([{ role: "system", text: "Call connected" }]);
-    await new Promise(r => setTimeout(r, 800));
+    await new Promise(r => setTimeout(r, 200));
 
     try {
       const resp = await fetch("/api/search", {
@@ -404,7 +404,7 @@ Return ONLY a JSON object (no markdown):
         const parsed = JSON.parse(m[0]);
         const convLines = parsed.lines || [];
         for (let i = 0; i < convLines.length; i++) {
-          await new Promise(r => setTimeout(r, 1500 + Math.random() * 1500));
+          await new Promise(r => setTimeout(r, 300 + Math.random() * 300));
           setTranscript(prev => [...prev, convLines[i]]);
         }
         if (parsed.result) {
@@ -420,7 +420,7 @@ Return ONLY a JSON object (no markdown):
     }
     clearInterval(timerRef.current);
     setCallStatus("Call ended");
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 200));
     setStep("transcript");
   };
 
@@ -713,7 +713,7 @@ export default function HalalManiacs() {
   const crawlTimerRef = useRef(null);
   const crawlStateDbRef = useRef([]);
   const PASSES_PER_CITY = 10;
-  const PASS_COOLDOWN = 60; // 60s between passes = ~10 min per city
+  const PASS_COOLDOWN = 15; // 15s between passes = ~2.5 min per city
 
   // DB tab state filter
   const [dbViewState, setDbViewState] = useState("all");
@@ -845,7 +845,7 @@ ${JSON_FMT}`
 
   const ALL_SOURCE_BATCHES = Array.from({length: 30}, (_, i) => makePass(i));
 
-  const INITIAL_BATCHES = ALL_SOURCE_BATCHES.slice(0, 3);
+  const INITIAL_BATCHES = ALL_SOURCE_BATCHES.slice(0, 5);
 
   // ── Parse JSON from API response ──────────────────────────
   const parseResults = (data) => {
@@ -1512,7 +1512,7 @@ No markdown, no backticks, ONLY the JSON array.` }],
           for (let c = PASS_COOLDOWN; c > 0; c--) {
             if (abortController.signal.aborted) break;
             setCrawlCooldown(c);
-            await new Promise(r => setTimeout(r, 1000));
+            await new Promise(r => setTimeout(r, 200));
           }
           setCrawlCooldown(0);
         }
@@ -1527,7 +1527,7 @@ No markdown, no backticks, ONLY the JSON array.` }],
         for (let c = 30; c > 0; c--) {
           if (abortController.signal.aborted) break;
           setCrawlCooldown(c);
-          await new Promise(r => setTimeout(r, 1000));
+          await new Promise(r => setTimeout(r, 200));
         }
         setCrawlCooldown(0);
       }
