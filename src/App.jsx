@@ -966,7 +966,7 @@ ${JSON_FMT}`
       if (b.type === "tool_result" && b.content) return typeof b.content === "string" ? b.content : b.content.map(c=>c.text||"").join("\n");
       return "";
     }).join("\n");
-    const m = allText.match(/\[[\s\S]*?\]/);
+    const start = allText.indexOf("["); const end = allText.lastIndexOf("]"); const m = start !== -1 && end > start ? [allText.slice(start, end+1)] : null;
     if (!m) return [];
     try {
       const parsed = JSON.parse(m[0]);
