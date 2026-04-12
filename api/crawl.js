@@ -47,6 +47,7 @@ export default async function handler(req, res) {
   const googleKey = process.env.GOOGLE_SEARCH_API_KEY;
   const googleCx  = process.env.GOOGLE_SEARCH_CX;
   const pplxKey   = process.env.PERPLEXITY_API_KEY; // fallback only
+  console.log('ENV CHECK: fc:', !!fcKey, 'claude:', !!claudeKey, 'google:', !!googleKey, 'pplx:', !!pplxKey);
 
   if (!fcKey) return res.status(500).json({ error: { message: 'FIRECRAWL_API_KEY not configured' } });
   if (!claudeKey && !pplxKey) return res.status(500).json({ error: { message: 'ANTHROPIC_API_KEY not configured' } });
@@ -199,6 +200,7 @@ Return ONLY a JSON array of city name strings. No markdown, no backticks. Exampl
   }
 
   // Step 4: Extract with Claude Haiku (replaces Perplexity)
+  console.log('DEBUG: claudeKey exists:', !!claudeKey, 'pplxKey exists:', !!pplxKey, 'scrapedText length:', scrapedText.length);
   if (claudeKey) {
     try {
       let prompt;
