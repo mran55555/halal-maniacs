@@ -718,6 +718,10 @@ function Card({ r, isNew, onAdd, onRemove, onRestore, onEdit, onShare, onNav, on
             {r.cuisine && <span style={{ fontSize:11, color:t.sub, fontStyle:"italic" }}>{r.cuisine}</span>}
             {r.halalLevel && <Pill color={HALAL_COLORS[r.halalLevel] || "#6b7280"} small>{r.halalLevel}</Pill>}
             {r.verifiedAt && <span style={{ fontSize:8, color:"#059669", fontWeight:800, fontFamily:"'JetBrains Mono',monospace", background:"#05966915", padding:"1px 5px", borderRadius:4, border:"1px solid #05966930" }}>📞 VERIFIED</span>}
+            {r.google?.rating && <span style={{ fontSize:10, color:"#d97706", fontWeight:700 }}>⭐ {r.google.rating}</span>}
+            {r.open_now === true && <span style={{ fontSize:9, color:"#059669", fontWeight:800, background:"#05966915", padding:"1px 6px", borderRadius:4" }}>🟢 OPEN</span>}
+            {r.open_now === false && <span style={{ fontSize:9, color:"#dc2626", fontWeight:700, background:"#dc262610", padding:"1px 6px", borderRadius:4 }}>🔴 CLOSED</span>}
+            {r.business_status === "CLOSED_TEMPORARILY" && <span style={{ fontSize:9, color:"#d97706", fontWeight:700 }}>⚠️ TEMP CLOSED</span>}
             {r._verified && !r.verifiedAt && <span style={{ fontSize:8, color:"#059669", fontWeight:800, fontFamily:"'JetBrains Mono',monospace", background:"#05966915", padding:"1px 5px", borderRadius:4, border:"1px solid #05966930" }}>✅ AI VERIFIED</span>}
             {r._verifyNote && <span style={{ fontSize:8, color:"#f59e0b", fontWeight:600, fontFamily:"'JetBrains Mono',monospace", background:"#f59e0b12", padding:"1px 5px", borderRadius:4, border:"1px solid #f59e0b30" }}>{r._verifyNote}</span>}
             {r.source && <span style={{ fontSize:9, color:t.muted, fontFamily:"'JetBrains Mono',monospace", background: t.bg, padding:"1px 6px", borderRadius:4 }}>via {r.source}</span>}
@@ -822,6 +826,8 @@ export default function HalalManiacs() {
 
   // DB tab state filter
   const [dbViewState, setDbViewState] = useState("all");
+  const [mapFilter, setMapFilter] = useState("");
+  const [mapCityFilter, setMapCityFilter] = useState("");
   const [availableStates, setAvailableStates] = useState([]);
 
   // DB state
@@ -1682,6 +1688,7 @@ No markdown, no backticks, ONLY the JSON array.` }],
     { id: "search", label: "Search", icon: <Search size={15}/>, badge: loading ? results.length : (newResults.length || null) },
     { id: "crawl", label: "Crawl", icon: <Globe size={15}/>, badge: crawlState === "crawling" ? crawlNewFound || "…" : null },
     { id: "database", label: "Database", icon: <Database size={15}/>, badge: db.length || null },
+    { id: "map", label: "Map", icon: <Navigation size={15}/>, badge: null },
     { id: "faves", label: "Faves", icon: <Star size={15}/>, badge: faves.length || null },
     { id: "trash", label: "Trash", icon: <Trash2 size={15}/>, badge: trash.length || null },
   ];
@@ -2163,6 +2170,83 @@ No markdown, no backticks, ONLY the JSON array.` }],
               )}
 
             </>
+          )}
+
+          {/* ═══ MAP TAB ════════════════════════════════════ */}
+          {tab === "map" && (
+            <div style={{ padding: "12px" }}>
+              {/* Map controls */}
+              <div style={{ display:"flex", gap:6, marginBottom:10, flexWrap:"wrap" }}>
+                <input
+                  placeholder="Filter by name or city..."
+                  style={{ flex:1, minWidth:140, padding:"8px 12px", borderRadius:8, border:`1px solid ${t.inputBorder}`, background:t.input, color:t.text, fontSize:12, fontFamily:"inherit" }}
+                  value={mapFilter || ""}
+                  onChange={e => setMapFilter(e.target.value)}
+                />
+                <select
+                  value={mapCityFilter || ""}
+                  onChange={e => setMapCityFilter(e.target.value)}
+                  style={{ padding:"8px 10px", borderRadius:8, border:`1px solid ${t.inputBorder}`, background:t.input, color:t.text, fontSize:12, fontFamily:"inherit" }}
+                >
+                  <option value="">All Cities</option>
+                  {[...new Set(db.map(r => (r.address?.city || r.address || "").split(",")[0].trim()).filter(Boolean))].sort().map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Google Maps embed */}
+              <div style={{ borderRadius:12, overflow:"hidden", border:`1px solid ${t.cardBorder}`, marginBottom:10 }}>
+                <iframe
+                  title="Halal Map"
+                  width="100%"
+                  height="350"
+                  style={{ display:"block", border:"none" }}
+                  loading="lazy"
+                  src={`https://www.google.com/maps/embed/v1/search?key=AIzaSyD-placeholder&q=halal+restaurants+${encodeURIComponent(mapCityFilter || "California")}`}
+                />
+              </div>
+
+              {/* Restaurant list for map tab */}
+              <div style={{ fontSize:11, fontWeight:700, color:t.sub, marginBottom:8, fontFamily:"'JetBrains Mono',monospace" }}>
+                {db.filter(r => {
+                  const city = (r.address?.city || r.address || "").toLowerCase();
+                  const mf = (mapFilter || "").toLowerCase();
+                  const cf = (mapCityFilter || "").toLowerCase();
+                  return (!mf || r.name.toLowerCase().includes(mf) || city.includes(mf)) &&
+                         (!cf || city.includes(cf));
+                }).length} restaurants
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:8, maxHeight:400, overflowY:"auto" }}>
+                {db.filter(r => {
+                  const city = (r.address?.city || r.address || "").toLowerCase();
+                  const mf = (mapFilter || "").toLowerCase();
+                  const cf = (mapCityFilter || "").toLowerCase();
+                  return (!mf || r.name.toLowerCase().includes(mf) || city.includes(mf)) &&
+                         (!cf || city.includes(cf));
+                }).map((r, i) => (
+                  <div key={i} style={{ background:t.card, border:`1px solid ${t.cardBorder}`, borderRadius:10, padding:"10px 12px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontWeight:600, fontSize:13, color:t.text, marginBottom:2 }}>{r.name}</div>
+                      <div style={{ fontSize:11, color:t.sub }}>
+                        {r.address?.city || r.address || ""}
+                        {r.google?.rating ? ` · ⭐ ${r.google.rating}` : ""}
+                        {r.open_now === true ? " · 🟢 Open" : r.open_now === false ? " · 🔴 Closed" : ""}
+                      </div>
+                    </div>
+                    {r.gmaps || r.address ? (
+                      <a
+                        href={r.gmaps || `https://www.google.com/maps/search/${encodeURIComponent(r.name + " " + (r.address?.city || r.address || ""))}`}
+                        target="_blank" rel="noopener"
+                        style={{ background:"#1e3a5f", color:"#fff", padding:"6px 10px", borderRadius:8, fontSize:11, fontWeight:700, textDecoration:"none", whiteSpace:"nowrap" }}
+                      >
+                        📍 Maps
+                      </a>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
 
           {/* ═══ FAVORITES TAB ═══════════════════════════ */}
