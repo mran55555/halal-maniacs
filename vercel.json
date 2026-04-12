@@ -1,14 +1,10 @@
 {
   "functions": {
-    "api/crawl.js": {
-      "maxDuration": 60
-    },
-    "api/search.js": {
-      "maxDuration": 60
-    }
+    "api/crawl.js": { "maxDuration": 60 },
+    "api/search.js": { "maxDuration": 60 },
+    "api/verify.js": { "maxDuration": 30 }
   },
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/:path*" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

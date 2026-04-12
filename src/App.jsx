@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Search, Settings, Trash2, Database, ChevronDown, ChevronUp, X, Check, Grid, List, Share2, Phone, Globe, MapPin, Instagram, ExternalLink, Plus, Minus, RotateCcw, Download, Upload, Edit3, AlertTriangle, Info, Star, Navigation } from "lucide-react";
 
 const DB_KEY = "hm-db";
@@ -58,12 +58,15 @@ function isKnown(name, addr, phone, website, db) {
     if (w && w.length > 3 && normUrl(r.website) === w) return true;
     // Full address match
     if (a && a.length > 5 && norm(r.address) === a) return true;
-    // Street-level address match
+    // Street-level address match — exact only, with matching street numbers,
+    // to avoid "Main St" colliding across cities.
     if (streetNorm && streetNorm.length > 5) {
       const dbStreet = norm(extractStreet(r.address));
-      if (dbStreet && dbStreet.length > 5 && dbStreet === streetNorm) return true;
-      if (dbStreet.length > 10 && streetNorm.length > 10) {
-        if (dbStreet.includes(streetNorm) || streetNorm.includes(dbStreet)) return true;
+      if (dbStreet && dbStreet.length > 5 && dbStreet === streetNorm) {
+        // Require a numeric prefix match (street number) to count this as a dup
+        const numA = (street.match(/^\d+/) || [""])[0];
+        const numB = (extractStreet(r.address).match(/^\d+/) || [""])[0];
+        if (numA && numB && numA === numB) return true;
       }
     }
     return false;
@@ -1113,12 +1116,14 @@ ${JSON_FMT}`
         }
         if (!resp.ok) {
           const errBody = await resp.json().catch(() => ({}));
-          const errMsg = errBody?.error?.message || "";
+          const errMsg = errBody?.error?.message || `HTTP ${resp.status}`;
           if (/rate|limit|quota|capacity|overloaded/i.test(errMsg)) {
-            setError(`⏳ ${errMsg || "Rate limit reached"} — try again later or during off-peak hours.`);
+            setError(`⏳ ${errMsg} — try again later or during off-peak hours.`);
             abortController.abort();
             return [];
           }
+          // Surface other API errors so you can see what's wrong (missing keys, etc.)
+          setError(`⚠️ API error: ${errMsg}. Check that ANTHROPIC_API_KEY is set in Vercel env vars.`);
           console.error(`API error ${resp.status}:`, errMsg);
           return [];
         }
@@ -1130,6 +1135,7 @@ ${JSON_FMT}`
             abortController.abort();
             return [];
           }
+          setError(`⚠️ ${errMsg}`);
           return [];
         }
         return parseResults(data);
@@ -1438,20 +1444,32 @@ No markdown, no backticks, ONLY the JSON array.` }],
     showToast(`🗑️ Moved ${toRemove.length} to trash`);
   };
 
-  // ── Derived ───────────────────────────────────────────────────
-  const knownResults = results.filter(r => isKnown(r.name, r.address, r.phone, r.website, db));
-  const trashedResults = results.filter(r => !isKnown(r.name, r.address, r.phone, r.website, db) && isKnown(r.name, r.address, r.phone, r.website, trash));
-  const maybeResults = results.filter(r => !isKnown(r.name, r.address, r.phone, r.website, db) && !isKnown(r.name, r.address, r.phone, r.website, trash) && isMaybeDuplicate(r.name, r.address, r.phone, r.website, db));
-  const newResults = results.filter(r => !isKnown(r.name, r.address, r.phone, r.website, db) && !isKnown(r.name, r.address, r.phone, r.website, trash) && !isMaybeDuplicate(r.name, r.address, r.phone, r.website, db));
-  const filteredDb = db
+  // ── Derived (memoized — was O(N*M) per render before) ─────────
+  const { knownResults, trashedResults, maybeResults, newResults } = useMemo(() => {
+    const known = [], trashed = [], maybe = [], fresh = [];
+    for (const r of results) {
+      if (isKnown(r.name, r.address, r.phone, r.website, db)) {
+        known.push(r);
+      } else if (isKnown(r.name, r.address, r.phone, r.website, trash)) {
+        trashed.push(r);
+      } else if (isMaybeDuplicate(r.name, r.address, r.phone, r.website, db)) {
+        maybe.push(r);
+      } else {
+        fresh.push(r);
+      }
+    }
+    return { knownResults: known, trashedResults: trashed, maybeResults: maybe, newResults: fresh };
+  }, [results, db, trash]);
+
+  const filteredDb = useMemo(() => db
     .filter(r => !dbViewState || dbViewState === "all" || (r._crawlState || "").toLowerCase().replace(/\s+/g, "-") === dbViewState)
-    .filter(r => !dbFilter || [r.name,r.cuisine,r.address].some(f => norm(f).includes(norm(dbFilter))))
+    .filter(r => !dbFilter || [r.name, r.cuisine, r.address].some(f => norm(f).includes(norm(dbFilter))))
     .filter(r => !dbHalalFilter || r.halalLevel === dbHalalFilter)
     .sort((a, b) => {
       if (dbSort === "name") return (a.name || "").localeCompare(b.name || "");
       if (dbSort === "cuisine") return (a.cuisine || "").localeCompare(b.cuisine || "");
       return new Date(b.addedAt || 0) - new Date(a.addedAt || 0);
-    });
+    }), [db, dbViewState, dbFilter, dbHalalFilter, dbSort]);
 
   if (!loaded) return <div style={{ height:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"#0f1729", color:"#8892a8", fontFamily:"'JetBrains Mono',monospace" }}>Loading…</div>;
 
@@ -2189,63 +2207,71 @@ No markdown, no backticks, ONLY the JSON array.` }],
                   style={{ padding:"8px 10px", borderRadius:8, border:`1px solid ${t.inputBorder}`, background:t.input, color:t.text, fontSize:12, fontFamily:"inherit" }}
                 >
                   <option value="">All Cities</option>
-                  {[...new Set(db.map(r => (r.address?.city || r.address || "").split(",")[0].trim()).filter(Boolean))].sort().map(c => (
+                  {[...new Set(db.map(r => {
+                    const parts = (r.address || "").split(",");
+                    return parts.length > 1 ? parts[1].trim() : "";
+                  }).filter(Boolean))].sort().map(c => (
                     <option key={c} value={c}>{c}</option>
                   ))}
                 </select>
               </div>
 
-              {/* Google Maps embed */}
-              <div style={{ borderRadius:12, overflow:"hidden", border:`1px solid ${t.cardBorder}`, marginBottom:10 }}>
-                <iframe
-                  title="Halal Map"
-                  width="100%"
-                  height="350"
-                  style={{ display:"block", border:"none" }}
-                  loading="lazy"
-                  src={`https://www.google.com/maps/embed/v1/search?key=AIzaSyD-placeholder&q=halal+restaurants+${encodeURIComponent(mapCityFilter || "California")}`}
-                />
+              {/* Open in Google Maps button (no API key needed) */}
+              <div style={{ marginBottom:12 }}>
+                <a
+                  href={`https://www.google.com/maps/search/${encodeURIComponent("halal restaurants " + (mapCityFilter || "near me"))}`}
+                  target="_blank" rel="noopener noreferrer"
+                  style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"12px", background:"linear-gradient(135deg,#1e3a5f,#2563eb)", color:"#fff", borderRadius:10, fontSize:13, fontWeight:700, textDecoration:"none" }}
+                >
+                  <Navigation size={16}/> Open Google Maps for {mapCityFilter || "Halal Restaurants Near Me"}
+                </a>
               </div>
 
               {/* Restaurant list for map tab */}
-              <div style={{ fontSize:11, fontWeight:700, color:t.sub, marginBottom:8, fontFamily:"'JetBrains Mono',monospace" }}>
-                {db.filter(r => {
-                  const city = (r.address?.city || r.address || "").toLowerCase();
-                  const mf = (mapFilter || "").toLowerCase();
-                  const cf = (mapCityFilter || "").toLowerCase();
-                  return (!mf || r.name.toLowerCase().includes(mf) || city.includes(mf)) &&
-                         (!cf || city.includes(cf));
-                }).length} restaurants
-              </div>
-              <div style={{ display:"flex", flexDirection:"column", gap:8, maxHeight:400, overflowY:"auto" }}>
-                {db.filter(r => {
-                  const city = (r.address?.city || r.address || "").toLowerCase();
-                  const mf = (mapFilter || "").toLowerCase();
-                  const cf = (mapCityFilter || "").toLowerCase();
-                  return (!mf || r.name.toLowerCase().includes(mf) || city.includes(mf)) &&
-                         (!cf || city.includes(cf));
-                }).map((r, i) => (
-                  <div key={i} style={{ background:t.card, border:`1px solid ${t.cardBorder}`, borderRadius:10, padding:"10px 12px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ fontWeight:600, fontSize:13, color:t.text, marginBottom:2 }}>{r.name}</div>
-                      <div style={{ fontSize:11, color:t.sub }}>
-                        {r.address?.city || r.address || ""}
-                        {r.google?.rating ? ` · ⭐ ${r.google.rating}` : ""}
-                        {r.open_now === true ? " · 🟢 Open" : r.open_now === false ? " · 🔴 Closed" : ""}
-                      </div>
+              {(() => {
+                const mf = (mapFilter || "").toLowerCase();
+                const cf = (mapCityFilter || "").toLowerCase();
+                const filtered = db.filter(r => {
+                  const addr = (r.address || "").toLowerCase();
+                  const name = (r.name || "").toLowerCase();
+                  return (!mf || name.includes(mf) || addr.includes(mf)) &&
+                         (!cf || addr.includes(cf));
+                });
+                return (
+                  <>
+                    <div style={{ fontSize:11, fontWeight:700, color:t.sub, marginBottom:8, fontFamily:"'JetBrains Mono',monospace" }}>
+                      {filtered.length} restaurant{filtered.length !== 1 ? "s" : ""}
                     </div>
-                    {r.gmaps || r.address ? (
-                      <a
-                        href={r.gmaps || `https://www.google.com/maps/search/${encodeURIComponent(r.name + " " + (r.address?.city || r.address || ""))}`}
-                        target="_blank" rel="noopener"
-                        style={{ background:"#1e3a5f", color:"#fff", padding:"6px 10px", borderRadius:8, fontSize:11, fontWeight:700, textDecoration:"none", whiteSpace:"nowrap" }}
-                      >
-                        📍 Maps
-                      </a>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:8, maxHeight:400, overflowY:"auto" }}>
+                      {filtered.slice(0, 100).map((r, i) => (
+                        <div key={i} style={{ background:t.card, border:`1px solid ${t.cardBorder}`, borderRadius:10, padding:"10px 12px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <div style={{ fontWeight:600, fontSize:13, color:t.text, marginBottom:2 }}>{r.name}</div>
+                            <div style={{ fontSize:11, color:t.sub, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                              {r.address || "No address"}
+                              {r.cuisine ? ` · ${r.cuisine}` : ""}
+                            </div>
+                          </div>
+                          {(r.gmaps || r.address) && (
+                            <a
+                              href={r.gmaps || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.name + " " + (r.address || ""))}`}
+                              target="_blank" rel="noopener noreferrer"
+                              style={{ background:"#1e3a5f", color:"#fff", padding:"6px 10px", borderRadius:8, fontSize:11, fontWeight:700, textDecoration:"none", whiteSpace:"nowrap" }}
+                            >
+                              📍 Maps
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                      {filtered.length > 100 && (
+                        <div style={{ textAlign:"center", padding:10, fontSize:11, color:t.muted, fontFamily:"'JetBrains Mono',monospace" }}>
+                          Showing first 100 of {filtered.length} — use filter to narrow down
+                        </div>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           )}
 
