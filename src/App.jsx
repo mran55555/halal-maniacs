@@ -719,7 +719,7 @@ function Card({ r, isNew, onAdd, onRemove, onRestore, onEdit, onShare, onNav, on
             {r.halalLevel && <Pill color={HALAL_COLORS[r.halalLevel] || "#6b7280"} small>{r.halalLevel}</Pill>}
             {r.verifiedAt && <span style={{ fontSize:8, color:"#059669", fontWeight:800, fontFamily:"'JetBrains Mono',monospace", background:"#05966915", padding:"1px 5px", borderRadius:4, border:"1px solid #05966930" }}>📞 VERIFIED</span>}
             {r.google?.rating && <span style={{ fontSize:10, color:"#d97706", fontWeight:700 }}>⭐ {r.google.rating}</span>}
-            {r.open_now === true && <span style={{ fontSize:9, color:"#059669", fontWeight:800, background:"#05966915", padding:"1px 6px", borderRadius:4" }}>🟢 OPEN</span>}
+            {r.open_now === true && <span style={{ fontSize:9, color:"#059669", fontWeight:800, background:"#05966915", padding:"1px 6px", borderRadius:4 }}>🟢 OPEN</span>}
             {r.open_now === false && <span style={{ fontSize:9, color:"#dc2626", fontWeight:700, background:"#dc262610", padding:"1px 6px", borderRadius:4 }}>🔴 CLOSED</span>}
             {r.business_status === "CLOSED_TEMPORARILY" && <span style={{ fontSize:9, color:"#d97706", fontWeight:700 }}>⚠️ TEMP CLOSED</span>}
             {r._verified && !r.verifiedAt && <span style={{ fontSize:8, color:"#059669", fontWeight:800, fontFamily:"'JetBrains Mono',monospace", background:"#05966915", padding:"1px 5px", borderRadius:4, border:"1px solid #05966930" }}>✅ AI VERIFIED</span>}
