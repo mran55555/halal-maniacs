@@ -16,14 +16,16 @@ Search query: "${userQuery}"
 
 ${searchContext ? `Real web search results:\n${searchContext}\n` : 'No search results available.\n'}
 
-STRICT RULES:
-1. ONLY include restaurants that appear in the search results above with a real source URL
-2. Do NOT use your training knowledge to add restaurants — if no real results exist, return []
-3. NEVER fabricate addresses, phone numbers, or websites — leave as "" if not in the source
-4. Skip permanently closed restaurants
-5. The "source" field MUST be the actual URL where the restaurant was found
+RULES:
+1. Extract restaurants mentioned in the search results above. Use the source URL, title, and description to identify restaurant names.
+2. If a restaurant name is mentioned in a result title or description, include it — even if the address isn't fully spelled out.
+3. NEVER fabricate addresses or phone numbers — leave as "" if not in the source. It is OK to have just a name.
+4. The "source" field MUST be the actual URL where the restaurant was found.
+5. Skip permanently closed restaurants and skip non-restaurants (grocery stores, mosques, schools).
+6. If the search results clearly contain no halal restaurants at all, return [].
+7. Do NOT invent restaurants from your training data.
 
-Return ONLY a valid JSON array (no markdown, no backticks, no commentary):
+Return ONLY a valid JSON array (no markdown code fences, no backticks, no commentary):
 [{"name":"","address":"","cuisine":"","phone":"","notes":"","website":"","gmaps":"","instagram":"","source":"URL"}]`;
 
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -51,8 +53,8 @@ Return ONLY a valid JSON array (no markdown, no backticks, no commentary):
 }
 
 async function firecrawlSearch(fcKey, query) {
-  // Firecrawl /v1/search returns search results with optional scraped content.
-  // Asking for markdown gives Claude richer grounding than just snippets.
+  // Plain Firecrawl search — no per-result scraping (faster, more reliable).
+  // We rely on title + description for grounding; Claude can extract from snippets.
   const resp = await fetch('https://api.firecrawl.dev/v1/search', {
     method: 'POST',
     headers: {
@@ -61,11 +63,7 @@ async function firecrawlSearch(fcKey, query) {
     },
     body: JSON.stringify({
       query,
-      limit: 8,
-      scrapeOptions: {
-        formats: ['markdown'],
-        onlyMainContent: true,
-      },
+      limit: 10,
     }),
   });
   if (!resp.ok) {
@@ -77,15 +75,16 @@ async function firecrawlSearch(fcKey, query) {
     throw err;
   }
   const data = await resp.json();
+  // Firecrawl returns results in data.data (array of {url, title, description, ...})
   const items = data?.data || [];
+  console.log(`Firecrawl returned ${items.length} results for query: "${query}"`);
   if (!items.length) return '';
-  // Compose grounding context. Cap each result to keep token usage sane.
   return items.map(item => {
     const url = item.url || '';
     const title = item.title || '';
-    const content = (item.markdown || item.description || '').substring(0, 1500);
-    return `SOURCE: ${url}\nTITLE: ${title}\nCONTENT:\n${content}`;
-  }).join('\n\n---\n\n');
+    const description = item.description || item.markdown || '';
+    return `SOURCE: ${url}\nTITLE: ${title}\nDESCRIPTION: ${description}`;
+  }).join('\n\n');
 }
 
 async function googleSearch(googleKey, googleCx, query) {
