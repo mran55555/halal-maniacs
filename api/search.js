@@ -128,13 +128,25 @@ export default async function handler(req, res) {
   const userMessage = lastUser?.content || messages[0]?.content || '';
   if (!userMessage) return res.status(400).json({ error: { message: 'No message in request body' } });
 
+  // The frontend sends a long prompt template; extract just the search intent.
+  // Pattern: "Search the web for: <query>\n\nCRITICAL RULES..." — grab the first line after the colon.
+  let searchQuery = userMessage;
+  const m = userMessage.match(/Search the web for:\s*([^\n]+)/i);
+  if (m && m[1]) {
+    searchQuery = m[1].trim();
+  } else {
+    // Fallback: take first line, strip trailing punctuation, cap at 200 chars
+    searchQuery = userMessage.split('\n')[0].trim().substring(0, 200);
+  }
+  console.log(`Search query (cleaned): "${searchQuery}"`);
+
   // ── Path 1: Firecrawl search + Claude extract (PRIMARY) ────────────────
   let firecrawlError = null;
   if (fcKey && claudeKey) {
     try {
-      const searchContext = await firecrawlSearch(fcKey, userMessage);
+      const searchContext = await firecrawlSearch(fcKey, searchQuery);
       if (searchContext) {
-        const text = await claudeExtract(claudeKey, userMessage, searchContext);
+        const text = await claudeExtract(claudeKey, searchQuery, searchContext);
         return res.status(200).json({
           content: [{ type: 'text', text }],
           citations: [],
@@ -149,20 +161,18 @@ export default async function handler(req, res) {
           error: { message: e.status === 429 ? 'Rate limit — try again in a minute' : 'Anthropic overloaded — try again shortly', type: 'rate_limit' }
         });
       }
-      // Save Firecrawl-specific errors so we can surface them if all paths fail
       if (e.source === 'firecrawl') {
         firecrawlError = `Firecrawl rejected the request (${e.status}). Check FIRECRAWL_API_KEY in Vercel env vars or your Firecrawl quota at firecrawl.dev/dashboard.`;
       }
-      // fall through to other providers
     }
   }
 
   // ── Path 2: Google Custom Search + Claude extract ──────────────────────
   if (googleKey && googleCx && claudeKey) {
     try {
-      const searchContext = await googleSearch(googleKey, googleCx, userMessage);
+      const searchContext = await googleSearch(googleKey, googleCx, searchQuery);
       if (searchContext) {
-        const text = await claudeExtract(claudeKey, userMessage, searchContext);
+        const text = await claudeExtract(claudeKey, searchQuery, searchContext);
         return res.status(200).json({
           content: [{ type: 'text', text }],
           citations: [],
@@ -177,7 +187,7 @@ export default async function handler(req, res) {
   // ── Last resort: Claude alone (will hallucinate, warn user) ────────────
   if (claudeKey) {
     try {
-      const text = await claudeExtract(claudeKey, userMessage, '');
+      const text = await claudeExtract(claudeKey, searchQuery, '');
       return res.status(200).json({
         content: [{ type: 'text', text }],
         citations: [],
