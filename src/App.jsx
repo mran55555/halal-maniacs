@@ -1123,7 +1123,7 @@ ${JSON_FMT}`
             return [];
           }
           // Surface other API errors so you can see what's wrong (missing keys, etc.)
-          setError(`⚠️ API error: ${errMsg}. Check that ANTHROPIC_API_KEY is set in Vercel env vars.`);
+          setError(`⚠️ API error: ${errMsg}. Check Vercel function logs and env vars (FIRECRAWL_API_KEY, ANTHROPIC_API_KEY).`);
           console.error(`API error ${resp.status}:`, errMsg);
           return [];
         }
@@ -1219,84 +1219,90 @@ ${JSON_FMT}`
       const final = dedup(allResults);
       setResults(final);
 
-      // ── AI Verification Pass — cross-check results ─────
+      // ── Google Places Verification Pass — fills in addresses/phones from real listings ─────
       if (final.length > 0 && !abortController.signal.aborted) {
         setVerifying(true);
-        setCurrentBatchLabel("Verifying results...");
+        setCurrentBatchLabel("Verifying with Google Maps...");
         const verified = [...final];
-        const batchSize = 5;
+        const cityForVerify = city.trim();
+        const stateForVerify = state.trim();
 
-        for (let i = 0; i < verified.length; i += batchSize) {
+        // Run verifications in parallel batches of 5 (Google Places allows it, way faster)
+        const PARALLEL = 5;
+        let processed = 0;
+
+        for (let i = 0; i < verified.length; i += PARALLEL) {
           if (abortController.signal.aborted) break;
-          const batch = verified.slice(i, i + batchSize);
-          setVerifyProgress(`Verifying ${i+1}-${Math.min(i+batchSize, verified.length)} of ${verified.length}`);
+          const slice = verified.slice(i, i + PARALLEL);
+          setVerifyProgress(`Verifying ${i+1}-${Math.min(i+PARALLEL, verified.length)} of ${verified.length}`);
 
-          try {
-            const names = batch.map((r, j) => `${i+j+1}. "${r.name}" at "${r.address || 'no address'}" phone: ${r.phone || 'none'}`).join("\n");
-            const resp = await fetch("/api/search", {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              signal: abortController.signal,
-              body: JSON.stringify({
-                messages: [{ role: "user", content: `Search the web for each of these restaurants. For each one, look up the restaurant name + city to verify it actually exists. Check Google Maps, Yelp, or any business listing.
-
-${names}
-
-For EACH restaurant, search for it and report:
-- Does a real business listing exist for this exact name in this city?
-- What is the correct address from the listing you found?
-- What is the correct phone number from the listing?
-- Does the listing mention halal?
-
-IMPORTANT: If you CANNOT find a real listing for a restaurant, mark exists as false. Do NOT guess.
-
-Return ONLY a JSON array, one object per restaurant in order:
-[{"index":1,"exists":true/false,"nameCorrect":"exact name from listing or same","addressCorrect":"exact address from listing or same","phoneCorrect":"phone from listing or same","isHalal":true/false/null,"note":"source URL or brief note"}]
-No markdown, no backticks, ONLY the JSON array.` }],
-              }),
-            });
-            if (resp.ok) {
+          await Promise.all(slice.map(async (r, j) => {
+            const realIdx = i + j;
+            try {
+              const resp = await fetch("/api/verify", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                signal: abortController.signal,
+                body: JSON.stringify({
+                  name: r.name,
+                  address: r.address,
+                  city: cityForVerify,
+                  state: stateForVerify,
+                }),
+              });
+              if (!resp.ok) return;
               const data = await resp.json();
-              const text = (data.content || []).map(b => b.text || "").join("");
-              const checks = safeParseJsonArray(text);
-              if (checks.length > 0) {
-                checks.forEach((check) => {
-                  const idx = (check.index || 1) - 1;
-                  const realIdx = i + idx;
-                  if (realIdx < verified.length && check) {
-                    if (check.exists === false) {
-                      verified[realIdx]._removed = true;
-                      verified[realIdx]._verifyNote = "Not found — may not exist";
-                    } else {
-                      verified[realIdx]._verified = true;
-                      if (check.nameCorrect && check.nameCorrect !== "same" && norm(check.nameCorrect) !== norm(verified[realIdx].name)) {
-                        verified[realIdx]._verifyNote = `AI suggests: ${check.nameCorrect}`;
-                      }
-                      if (check.addressCorrect && check.addressCorrect !== "same" && check.addressCorrect.length > 5 && norm(check.addressCorrect) !== norm(verified[realIdx].address)) {
-                        verified[realIdx].address = check.addressCorrect;
-                        verified[realIdx].gmaps = autoGmaps(verified[realIdx].name, check.addressCorrect);
-                      }
-                      if (check.phoneCorrect && check.phoneCorrect !== "same" && check.phoneCorrect.length > 5) {
-                        verified[realIdx].phone = check.phoneCorrect;
-                      }
-                      if (check.isHalal === false) {
-                        verified[realIdx]._verifyNote = "AI could not confirm halal status";
-                        verified[realIdx].halalLevel = "Unverified";
-                      }
-                      if (check.note) {
-                        verified[realIdx].notes = [verified[realIdx].notes, check.note].filter(Boolean).join(" | ");
-                      }
-                    }
-                  }
-                });
+
+              if (!data.found) {
+                // Couldn't find on Google Maps — flag but don't remove (Firecrawl found it from a real source)
+                verified[realIdx]._verifyNote = "Not on Google Maps";
+                return;
               }
+
+              if (data.permanentlyClosed) {
+                verified[realIdx]._removed = true;
+                verified[realIdx]._verifyNote = "Permanently closed";
+                return;
+              }
+
+              // Merge in Google Places data — fills addresses/phones/websites from authoritative source
+              verified[realIdx]._verified = true;
+              verified[realIdx]._googleVerified = true;
+              if (data.address && data.address.length > 5) {
+                verified[realIdx].address = data.address;
+                verified[realIdx].gmaps = data.gmaps || autoGmaps(verified[realIdx].name, data.address);
+              }
+              if (data.phone && !verified[realIdx].phone) {
+                verified[realIdx].phone = data.phone;
+              }
+              if (data.website && !verified[realIdx].website) {
+                verified[realIdx].website = data.website;
+              }
+              if (data.rating) {
+                verified[realIdx]._googleRating = `${data.rating}⭐ (${data.totalRatings})`;
+                const ratingNote = `Google: ${data.rating}⭐ (${data.totalRatings} reviews)`;
+                if (!(verified[realIdx].notes || "").includes("Google:")) {
+                  verified[realIdx].notes = [verified[realIdx].notes, ratingNote].filter(Boolean).join(" | ");
+                }
+              }
+              if (data.temporarilyClosed) {
+                verified[realIdx]._temporarilyClosed = true;
+                verified[realIdx].notes = [verified[realIdx].notes, "⚠️ Temporarily closed"].filter(Boolean).join(" | ");
+              }
+              // Refresh the unverified flags now that we may have an address/phone
+              verified[realIdx]._noAddr = !verified[realIdx].address || verified[realIdx].address.trim().length < 3;
+              verified[realIdx]._unverified = verified[realIdx]._noAddr && (!verified[realIdx].phone || verified[realIdx].phone.trim().length < 5);
+            } catch(e) {
+              if (e.name !== "AbortError") console.error(`Verify failed for ${r.name}:`, e);
             }
-          } catch(e) {
-            if (e.name === "AbortError") break;
-            console.error("Verify batch failed:", e);
-          }
+            processed++;
+          }));
+
+          // Update UI progressively so user sees results filling in
+          setResults([...verified]);
         }
 
-        // Remove non-existent restaurants, keep the rest
+        // Remove permanently-closed entries; keep everything else
         const cleaned = verified.filter(r => !r._removed);
         setResults(cleaned);
         setVerifying(false);
@@ -1305,7 +1311,7 @@ No markdown, no backticks, ONLY the JSON array.` }],
 
         if (cleaned.length) {
           const newCount = cleaned.filter(r => !isKnown(r.name, r.address, r.phone, r.website, db)).length;
-          const verifiedCount = cleaned.filter(r => r._verified).length;
+          const verifiedCount = cleaned.filter(r => r._googleVerified).length;
           const removedCount = verified.length - cleaned.length;
           const elapsed = Math.floor((Date.now() - startTime) / 1000);
           const mins = Math.floor(elapsed / 60);
