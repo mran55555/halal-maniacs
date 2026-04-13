@@ -71,7 +71,10 @@ async function firecrawlSearch(fcKey, query) {
   if (!resp.ok) {
     const errBody = await resp.text().catch(() => '');
     console.error('Firecrawl search failed:', resp.status, errBody);
-    return null;
+    const err = new Error(`Firecrawl ${resp.status}: ${errBody.substring(0, 200)}`);
+    err.status = resp.status;
+    err.source = 'firecrawl';
+    throw err;
   }
   const data = await resp.json();
   const items = data?.data || [];
@@ -112,11 +115,10 @@ export default async function handler(req, res) {
   const claudeKey   = process.env.ANTHROPIC_API_KEY;
   const googleKey   = process.env.GOOGLE_SEARCH_API_KEY;
   const googleCx    = process.env.GOOGLE_SEARCH_CX;
-  const pplxKey     = process.env.PERPLEXITY_API_KEY;
 
-  console.log('ENV CHECK: firecrawl:', !!fcKey, 'claude:', !!claudeKey, 'google:', !!(googleKey && googleCx), 'pplx:', !!pplxKey);
+  console.log('ENV CHECK: firecrawl:', !!fcKey, 'claude:', !!claudeKey, 'google:', !!(googleKey && googleCx));
 
-  if (!claudeKey && !pplxKey) {
+  if (!claudeKey) {
     return res.status(500).json({
       error: { message: 'No API keys configured. Set ANTHROPIC_API_KEY in Vercel env vars.' }
     });
@@ -128,6 +130,7 @@ export default async function handler(req, res) {
   if (!userMessage) return res.status(400).json({ error: { message: 'No message in request body' } });
 
   // ── Path 1: Firecrawl search + Claude extract (PRIMARY) ────────────────
+  let firecrawlError = null;
   if (fcKey && claudeKey) {
     try {
       const searchContext = await firecrawlSearch(fcKey, userMessage);
@@ -147,7 +150,11 @@ export default async function handler(req, res) {
           error: { message: e.status === 429 ? 'Rate limit — try again in a minute' : 'Anthropic overloaded — try again shortly', type: 'rate_limit' }
         });
       }
-      // fall through
+      // Save Firecrawl-specific errors so we can surface them if all paths fail
+      if (e.source === 'firecrawl') {
+        firecrawlError = `Firecrawl rejected the request (${e.status}). Check FIRECRAWL_API_KEY in Vercel env vars or your Firecrawl quota at firecrawl.dev/dashboard.`;
+      }
+      // fall through to other providers
     }
   }
 
@@ -168,41 +175,6 @@ export default async function handler(req, res) {
     }
   }
 
-  // ── Path 3: Perplexity ─────────────────────────────────────────────────
-  if (pplxKey) {
-    try {
-      const response = await fetch('https://api.perplexity.ai/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${pplxKey}` },
-        body: JSON.stringify({
-          model: 'sonar-pro',
-          messages: [
-            { role: 'system', content: 'Return ONLY a valid JSON array. No markdown. Each object: {"name":"","address":"","cuisine":"","phone":"","notes":"","website":"","gmaps":"","instagram":"","source":""}. Never invent data — leave blank if unknown. Skip permanently closed restaurants.' },
-            { role: 'user', content: userMessage }
-          ],
-          max_tokens: 4096,
-          temperature: 0,
-          return_citations: true,
-        }),
-      });
-      if (response.status === 429) {
-        return res.status(429).json({ error: { message: 'Rate limit — try again in a minute', type: 'rate_limit' } });
-      }
-      const data = await response.json();
-      if (!response.ok) {
-        return res.status(response.status).json({ error: { message: data?.error?.message || 'Perplexity error' } });
-      }
-      const text = data?.choices?.[0]?.message?.content || '[]';
-      return res.status(200).json({
-        content: [{ type: 'text', text }],
-        citations: data?.citations || [],
-        provider: 'perplexity',
-      });
-    } catch (e) {
-      console.error('Perplexity failed:', e.message);
-    }
-  }
-
   // ── Last resort: Claude alone (will hallucinate, warn user) ────────────
   if (claudeKey) {
     try {
@@ -218,5 +190,7 @@ export default async function handler(req, res) {
     }
   }
 
-  return res.status(500).json({ error: { message: 'All extraction paths failed' } });
+  return res.status(500).json({
+    error: { message: firecrawlError || 'All extraction paths failed' }
+  });
 }
